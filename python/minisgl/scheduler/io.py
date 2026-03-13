@@ -27,11 +27,13 @@ class SchedulerIOMixin:
     def __init__(self, config: SchedulerConfig, tp_cpu_group: torch.distributed.ProcessGroup):
         tp_info = config.tp_info
         self.tp_cpu_group: Final = tp_cpu_group
+        # 离线模式
         if config.offline_mode:
             self.receive_msg = self.offline_receive_msg
             self.send_result = self.offline_send_result
             return  # early exit
 
+        # 单Rank模式
         if tp_info.is_primary():
             self._recv_from_tokenizer: Final = ZmqPullQueue(
                 config.zmq_backend_addr,
@@ -43,9 +45,10 @@ class SchedulerIOMixin:
                 create=config.backend_create_detokenizer_link,
                 encoder=BaseTokenizerMsg.encoder,
             )
-
         recv = self._recv_msg_single_rank
         send = self._reply_tokenizer_rank0
+
+        # 多Rank模式
         if tp_info.size > 1:
             if tp_info.is_primary():
                 recv = self._recv_msg_multi_rank0
@@ -74,6 +77,7 @@ class SchedulerIOMixin:
         raise NotImplementedError("should be implemented")
 
     def sync_all_ranks(self) -> None:
+        # CPU端的全局同步, 确保所有Rank都准备就绪
         self.tp_cpu_group.barrier().wait()
 
     def _recv_msg_single_rank(self, blocking: bool = False) -> List[BaseBackendMsg]:
@@ -89,6 +93,7 @@ class SchedulerIOMixin:
         pending_msgs: List[BaseBackendMsg] = []
         if blocking:
             self.run_when_idle()
+            # 一直等待第一条消息
             raw = self._recv_from_tokenizer.get_raw()
             self._send_into_ranks.put_raw(raw)
             pending_msgs.append(self._recv_from_tokenizer.decode(raw))
@@ -101,6 +106,7 @@ class SchedulerIOMixin:
         src_tensor = torch.tensor(len(pending_raw_msgs))
         self.tp_cpu_group.broadcast(src_tensor, root=0).wait()
 
+        # 同步所有Rank的消息数量, 然后广播所有消息
         for raw in pending_raw_msgs:
             self._send_into_ranks.put_raw(raw)
             pending_msgs.append(self._recv_from_tokenizer.decode(raw))
@@ -110,6 +116,7 @@ class SchedulerIOMixin:
         pending_msgs: List[BaseBackendMsg] = []
         if blocking:
             self.run_when_idle()
+            # 被动接受Rank 0 发来的第一条消息
             pending_msgs.append(self._recv_from_rank0.get())
 
         # ensure all ranks have the same number of raw messages
@@ -117,16 +124,20 @@ class SchedulerIOMixin:
         self.tp_cpu_group.broadcast(dst_tensor, root=0).wait()
         dst_length = int(dst_tensor.item())
 
+        # 通过 dist.broadcast 接收 Rank 0 传来的消息条数,
+        # 然后循环拉取相同数量的消息.
         for _ in range(dst_length):
             pending_msgs.append(self._recv_from_rank0.get())
         return pending_msgs
 
     def _reply_tokenizer_rank0(self, reply: List[DetokenizeMsg]) -> None:
+        # 只有 Rank 0 真正执行发送逻辑
         num_reply = len(reply)
         logger.debug_rank0(f"Replying to tokenizer: {num_reply} messages")
         if num_reply == 1:
             self._send_into_tokenizer.put(reply[0])
         elif num_reply > 1:
+            # 多条消息进行封装
             self._send_into_tokenizer.put(BatchTokenizerMsg(data=reply))  # type: ignore
 
     def _reply_tokenizer_rank1(self, reply: List[DetokenizeMsg]) -> None:

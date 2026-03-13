@@ -16,6 +16,7 @@ class TokenizeManager:
         # TODO: batch tokenization
         for msg in msgs:
             if isinstance(msg.text, list):
+                # 调用HF AutioTokenizer 将用户输入的prompt转换成文本
                 prompt = self.tokenizer.apply_chat_template(
                     msg.text,
                     tokenize=False,
@@ -24,6 +25,7 @@ class TokenizeManager:
                 assert isinstance(prompt, str)
             else:
                 prompt = msg.text
+            # 调用HF Tokenizer 将文本转换成Token ID序列
             input_ids: torch.Tensor = (  # type: ignore
                 self.tokenizer.encode(prompt, return_tensors="pt")
             )

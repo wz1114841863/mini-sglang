@@ -11,6 +11,8 @@ from .utils import deserialize_type, serialize_type
 
 @dataclass
 class BaseBackendMsg:
+    """进程间通信(IPC)的结构化消息模型"""
+
     def encoder(self) -> Dict:
         return serialize_type(self)
 

@@ -21,6 +21,8 @@ logger = init_logger(__name__)
 
 
 class ChunkedReq(Req):
+    """分块预填充"""
+
     def append_host(self, next_token: torch.Tensor) -> None:
         raise NotImplementedError("ChunkedReq should not be sampled")
 
@@ -31,16 +33,20 @@ class ChunkedReq(Req):
 
 @dataclass
 class PrefillAdder:
+    # 当前Batch还能容纳多少个Token.
     token_budget: int
     reserved_size: int
     cache_manager: CacheManager
     table_manager: TableManager
 
     def _try_allocate_one(self, req: PendingReq) -> Tuple[BaseCacheHandle, int] | None:
+        """尝试为一个请求分配资源, 返回缓存句柄和表格索引. 如果资源不足, 返回 None."""
         if self.table_manager.available_size == 0:
+            # table_manager是否还有空位记录请求
             return None
 
         # TODO: consider host cache match case
+        # 匹配前缀: 查看有没有能复用的前缀缓存.
         handle = self.cache_manager.match_req(req).cuda_handle
         cached_len = handle.cached_len
         # TODO: better estimate policy
@@ -48,6 +54,7 @@ class PrefillAdder:
         estimated_len = extend_len + req.output_len
 
         if estimated_len + self.reserved_size > self.cache_manager.available_size:
+            # 预估总长度 + 正在跑的 Decode 预留空间 > 当前可用显存
             return None
         self.cache_manager.lock(handle)
         if estimated_len + self.reserved_size > self.cache_manager.available_size:

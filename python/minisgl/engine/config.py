@@ -14,17 +14,25 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class EngineConfig:
+    # 模型路径或 HuggingFace ID
     model_path: str
+    # 张量并行信息
     tp_info: DistributedInfo
+    # 数据类型
     dtype: torch.dtype
+    # 最大运行请求数
     max_running_req: int = 256
+    # 注意力后端和 MoE 后端,"auto" 表示自动选择
     attention_backend: str = "auto"
     moe_backend: str = "auto"
+    # CUDA 图相关配置
     cuda_graph_bs: List[int] | None = None
     cuda_graph_max_bs: int | None = None
+    # KV 缓存管理相关配置
     page_size: int = 1
     memory_ratio: float = 0.9
     distributed_timeout: float = 60.0
+    # 是否使用 dummy 权重(全零权重),主要用于测试和调试,能显著加快模型加载速度
     use_dummy_weight: bool = False
     use_pynccl: bool = True
     max_seq_len_override: int | None = None

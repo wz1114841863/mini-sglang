@@ -61,6 +61,8 @@ def launch_server(run_shell: bool = False) -> None:
                 server_args,
                 tp_info=DistributedInfo(i, world_size),
             )
+            # Scheduler 进程
+            # 每个进程控制一个GPU, 负责加载模型分片, 管理KV缓存等
             mp.Process(
                 target=_run_scheduler,
                 args=(new_args, ack_queue),
@@ -86,6 +88,7 @@ def launch_server(run_shell: bool = False) -> None:
             name="minisgl-detokenizer-0",
         ).start()
         for i in range(num_tokenizers):
+            # 负责文本与 Token ID 之间的相互转换
             mp.Process(
                 target=tokenize_worker,
                 kwargs={
@@ -110,6 +113,7 @@ def launch_server(run_shell: bool = False) -> None:
         for _ in range(num_tokenizers + 2):
             logger.info(ack_queue.get())
 
+    # API Server
     run_api_server(server_args, start_subprocess, run_shell=run_shell)
 
 

@@ -8,6 +8,8 @@ from minisgl.core import Batch, Req
 
 @dataclass
 class DecodeManager:
+    """维护当前正在并行生成的请求集合, 计算它们还需要消耗多少显存资源."""
+
     page_size: int
     running_reqs: Set[Req] = field(default_factory=set)
 
@@ -26,6 +28,7 @@ class DecodeManager:
 
     @property
     def inflight_tokens(self) -> int:
+        """资源估算"""
         tokens_reserved = (self.page_size - 1) * len(self.running_reqs)  # 1 page reserved
         return sum(req.remain_len for req in self.running_reqs) + tokens_reserved
 

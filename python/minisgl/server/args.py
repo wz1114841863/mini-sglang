@@ -13,8 +13,11 @@ from minisgl.utils import init_logger
 
 @dataclass(frozen=True)
 class ServerArgs(SchedulerConfig):
+    # API 服务器监听的地址和端口
     server_host: str = "127.0.0.1"
     server_port: int = 1919
+    # tokenizer 相关配置, num_tokenizer=0 表示与 detokenizer 共享同一个进程,
+    # num_tokenizer>0 表示单独的 tokenizer 进程数量
     num_tokenizer: int = 0
     silent_output: bool = False
 
@@ -229,6 +232,7 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     # resolve some arguments
     run_shell |= kwargs.pop("shell_mode")
     if run_shell:
+        # 命令行调试时, 引擎会自动收缩资源.
         kwargs["cuda_graph_max_bs"] = 1
         kwargs["max_running_req"] = 1
         kwargs["silent_output"] = True
