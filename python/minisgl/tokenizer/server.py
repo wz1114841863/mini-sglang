@@ -31,11 +31,11 @@ def _unwrap_msg(msg: BaseTokenizerMsg) -> List[BaseTokenizerMsg]:
 def tokenize_worker(
     *,
     tokenizer_path: str,
-    addr: str,
+    addr: str,  # 当前进程监听接收消息的ZMQ地址
     create: bool,
-    backend_addr: str,
-    frontend_addr: str,
-    local_bs: int,
+    backend_addr: str,  # 当前进程发送给后端推理引擎结果的 ZMQ 地址
+    frontend_addr: str,  # 当前进程发送给前端 API 服务器结果的 ZMQ 地址
+    local_bs: int,  # 本地最大批处理大小
     tokenizer_id: int = -1,
     model_source: str = "huggingface",
     ack_queue: mp.Queue[str] | None = None,
@@ -50,6 +50,7 @@ def tokenize_worker(
     from .detokenize import DetokenizeManager
     from .tokenize import TokenizeManager
 
+    # 加载了底层的 Tokenizer,并实例化了两个管理器
     tokenize_manager = TokenizeManager(tokenizer)
     detokenize_manager = DetokenizeManager(tokenizer)
 
@@ -59,6 +60,8 @@ def tokenize_worker(
     try:
         while True:
             pending_msg = _unwrap_msg(recv_listener.get())
+            # 贪婪动态批处理: 每次循环先取一个消息,然后再不断尝试取更多消息直到达到 local_bs 或者没有更多消息了
+            # 提高吞吐量, 将多个请求合并成一个批次处理, 同时又不增加过多的延迟
             while len(pending_msg) < local_bs and not recv_listener.empty():
                 pending_msg.extend(_unwrap_msg(recv_listener.get()))
 
@@ -68,6 +71,7 @@ def tokenize_worker(
             tokenize_msg = [m for m in pending_msg if isinstance(m, TokenizeMsg)]
             abort_msg = [m for m in pending_msg if isinstance(m, AbortMsg)]
             assert len(detokenize_msg) + len(tokenize_msg) + len(abort_msg) == len(pending_msg)
+
             if len(detokenize_msg) > 0:
                 replies = detokenize_manager.detokenize(detokenize_msg)
                 batch_output = BatchFrontendMsg(
@@ -99,6 +103,8 @@ def tokenize_worker(
                 if len(batch_output.data) == 1:
                     batch_output = batch_output.data[0]
                 send_backend.put(batch_output)
+
+            # 处理取消请求,将它们转换成后端消息发送给推理引擎,以便及时释放资源
             if len(abort_msg) > 0:
                 batch_output = BatchBackendMsg(
                     data=[AbortBackendMsg(uid=msg.uid) for msg in abort_msg]

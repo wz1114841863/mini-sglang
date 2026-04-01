@@ -19,8 +19,10 @@ def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str]) -> None:
 
     with torch.inference_mode():
         scheduler = Scheduler(args)
+        # 同步所有分布式进程
         scheduler.sync_all_ranks()
 
+        # 只有主进程发送 ack,表示 Scheduler 已经准备就绪
         if args.tp_info.is_primary():
             ack_queue.put("Scheduler is ready")
 
@@ -28,6 +30,7 @@ def _run_scheduler(args: ServerArgs, ack_queue: mp.Queue[str]) -> None:
             logging.disable(logging.INFO)
 
         try:
+            # 进入死循环,不断从队列取请求并进行推理
             scheduler.run_forever()
         except KeyboardInterrupt:
             logger = init_logger(__name__)
@@ -46,17 +49,20 @@ def launch_server(run_shell: bool = False) -> None:
 
     def start_subprocess() -> None:
         import multiprocessing as mp
-
         from minisgl.tokenizer import tokenize_worker
 
+        # 使用 'spawn' 模式启动进程,这是推理框架的标准做法
         mp.set_start_method("spawn", force=True)
 
+        # 张量并行的规模(通常等于 GPU 数量)
         world_size = server_args.tp_info.size
         # a multiprocessing queue to receive ack from subprocesses
         # so that we can guarantee all subprocesses are ready
+        # 进程间同步用的队列
         ack_queue: mp.Queue[str] = mp.Queue()
 
         for i in range(world_size):
+            # 为每个进程创建一个新的参数拷贝,更新其 Rank ID (0, 1, 2...)
             new_args = replace(
                 server_args,
                 tp_info=DistributedInfo(i, world_size),
@@ -114,6 +120,8 @@ def launch_server(run_shell: bool = False) -> None:
             logger.info(ack_queue.get())
 
     # API Server
+    # 启动 API 服务器,并将 start_subprocess 作为回调传入
+    # API Server 启动后会调用 start_subprocess 唤起上述所有子进程
     run_api_server(server_args, start_subprocess, run_shell=run_shell)
 
 

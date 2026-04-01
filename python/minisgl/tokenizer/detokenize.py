@@ -53,8 +53,8 @@ def find_printable_text(text: str):
 
 @dataclass
 class DecodeStatus:
-    decoded_ids: List[int]
-    decoded_str: str
+    decoded_ids: List[int]  # 当前请求已经生成的所有 Token ID 列表.
+    decoded_str: str  # 当前请求已经生成的字符串.
     read_offset: int  # length of read ids
     surr_offset: int  # length of surr ids
     sent_offset: int  # length of sent out string

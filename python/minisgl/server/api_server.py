@@ -99,12 +99,16 @@ class ModelList(BaseModel):
 
 @dataclass
 class FrontendManager:
+    """负责管理 API Server 与 Tokenizer 进程之间的通信,以及每个用户请求的状态"""
+
     config: ServerArgs
     send_tokenizer: ZmqAsyncPushQueue[BaseTokenizerMsg]
     recv_tokenizer: ZmqAsyncPullQueue[BaseFrontendMsg]
     uid_counter: int = 0
     initialized: bool = False
+    # 一个字典,记录每个用户ID(uid)对应的推理结果缓冲区
     ack_map: Dict[int, List[UserReply]] = field(default_factory=dict)
+    # 为每个请求维护一个asyncio.Event,当ZMQ收到该请求的新Token时,触发事件通知API线程取走数据.
     event_map: Dict[int, asyncio.Event] = field(default_factory=dict)
 
     def new_user(self) -> int:
@@ -115,6 +119,7 @@ class FrontendManager:
         return uid
 
     async def listen(self):
+        """listen() 协程在后台死循环运行,通过 ZmqAsyncPullQueue 监听来自推理后端的 UserReply"""
         while True:
             msg = await self.recv_tokenizer.get()
             for msg in _unwrap_msg(msg):
@@ -189,6 +194,7 @@ class FrontendManager:
         logger.debug("Finished streaming response for user %s", uid)
 
     async def stream_with_cancellation(self, generator, request: Request, uid: int):
+        """在流式传输过程中,不断检查客户端是否断开连接,如果断开则取消生成任务并清理状态"""
         try:
             async for chunk in generator:
                 # detect if the client has disconnected
@@ -228,6 +234,9 @@ app = FastAPI(title="MiniSGL API Server", version="0.0.1", lifespan=lifespan)
 
 @app.post("/generate")
 async def generate(req: GenerateRequest, request: Request):
+    """接收来自客户端的生成请求,
+    将其转换为 TokenizeMsg 发送给 Tokenizer 进程,
+    然后通过 StreamingResponse 将推理结果流式返回给客户端."""
     logger.debug("Received generate request %s", req)
     state = get_global_state()
     uid = state.new_user()
@@ -435,6 +444,7 @@ def run_api_server(config: ServerArgs, start_backend: Callable[[], None], run_sh
     )
 
     # start the backend here
+    # 启动所有的子进程,包括 TP Scheduler 进程和 Tokenizer/Detokenizer 进程,并等待它们全部就绪
     start_backend()
 
     logger.info(f"API server is ready to serve on {host}:{port}")
