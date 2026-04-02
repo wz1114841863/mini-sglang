@@ -76,6 +76,8 @@ class PrefillAdder:
         table_idx: int,
         cached_len: int,
     ) -> Req:
+        """拼装与分块切片, 返回一个 Req 或 ChunkedReq 实例.
+        这个函数假设已经锁定了 cache_handle, 并且预留了足够的资源."""
         remain_len = pending_req.input_len - cached_len
         chunk_size = min(self.token_budget, remain_len)
         is_chunked = chunk_size < remain_len
@@ -83,6 +85,7 @@ class PrefillAdder:
         self.token_budget -= chunk_size
         self.reserved_size += remain_len + pending_req.output_len
         # NOTE: update the tokens ids only; new pages will be allocated in the scheduler
+        # 异步拷贝 Token ID 到显存池
         _slice = slice(cached_len, cached_len + chunk_size)
         device_ids = self.table_manager.token_pool[table_idx, _slice]
         device_ids.copy_(pending_req.input_ids[_slice].pin_memory(), non_blocking=True)

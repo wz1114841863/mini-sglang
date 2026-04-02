@@ -56,6 +56,7 @@ class SchedulerIOMixin:
                     config.zmq_scheduler_broadcast_addr, create=True, encoder=BaseBackendMsg.encoder
                 )
             else:
+                # 在张量并行下,所有的 GPU 必须在同一时刻处理一模一样的请求 Batch
                 recv = self._recv_msg_multi_rank1
                 send = self._reply_tokenizer_rank1
                 self._recv_from_rank0: Final = ZmqSubQueue(
@@ -100,6 +101,7 @@ class SchedulerIOMixin:
 
         pending_raw_msgs: List[bytes] = []
         while not self._recv_from_tokenizer.empty():
+            # 极其精明的性能优化:拿到原生的字节流 (raw)
             pending_raw_msgs.append(self._recv_from_tokenizer.get_raw())
 
         # broadcast the number of raw messages to all ranks

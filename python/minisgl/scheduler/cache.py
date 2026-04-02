@@ -23,16 +23,21 @@ class CacheManager:
         self.prefix_cache = create_prefix_cache(device=device, type=type)
         self.device = device
         self.num_pages = num_pages
-        self.page_table = page_table  # 二维张量, 记录每个请求对应的KV缓存页面索引.
-        self.page_size = page_size  # 每页包含的Token数量.
+        # 逻辑地址到物理地址的映射表
+        # 二维张量, 记录每个请求对应的KV缓存页面索引.
+        self.page_table = page_table
+        self.page_size = page_size
 
     def match_req(self, req: PendingReq) -> MatchResult:
+        """匹配请求的输入前缀在 Radix Cache 中是否命中, 返回匹配结果."""
         input_len = req.input_len
         assert input_len > 0, "Input length must be greater than 0."
         return self.prefix_cache.match_prefix(req.input_ids[: input_len - 1])
 
     @property
     def available_size(self) -> int:
+        # Prefix Cache 中可以被驱逐(Evictable)的容量 + 当前完全空闲的页面容量.
+        # 这体现了全局统一内存池的设计思想.
         return self.prefix_cache.size_info.evictable_size + len(self.free_slots) * self.page_size
 
     def lock(self, handle: BaseCacheHandle) -> None:
@@ -42,6 +47,7 @@ class CacheManager:
         self.prefix_cache.lock_handle(handle, unlock=True)
 
     def allocate_paged(self, reqs: List[Req]) -> None:
+        """根据请求的需求分配页面, 如果当前空闲页面不足, 则触发驱逐以释放足够的页面."""
         needed_pages = 0
         allocation_info: List[Tuple[int, int, int]] = []
         for req in reqs:
@@ -106,6 +112,7 @@ class CacheManager:
         """
 
         def lazy_free(indices: torch.Tensor) -> None:
+            """动态替换成了一个简单的列表 append 操作"""
             lazy_free_list.append(indices[:: self.page_size])
 
         lazy_free_list: List[torch.Tensor] = []
@@ -117,6 +124,7 @@ class CacheManager:
             self.free_slots = torch.cat([self.free_slots] + lazy_free_list)
 
     def _allocate(self, needed_pages: int) -> torch.Tensor:
+        """分配页面, 如果当前空闲页面不足, 则触发驱逐以释放足够的页面."""
         if needed_pages > (free_pages := len(self.free_slots)):
             evicted = self.prefix_cache.evict((needed_pages - free_pages) * self.page_size)
             self.free_slots = torch.cat([self.free_slots, evicted[:: self.page_size]])
@@ -130,6 +138,7 @@ class CacheManager:
             self.free_slots = torch.cat([self.free_slots, indices[:: self.page_size]])
 
     def _page_to_token(self, pages: torch.Tensor) -> torch.Tensor:
+        """将页面索引转换为对应的Token索引."""
         if self.page_size == 1:
             return pages
         # [X * page_size] -> [X * page_size, ..., X * page_size + page_size - 1]
@@ -143,6 +152,7 @@ def _write_page_table(
     allocation_info: List[Tuple[int, int, int]],
     page_size: int,
 ) -> None:
+    """把分配好的物理索引写入到 GPU 的 page_table 中"""
     needed_tokens = len(allocated)
     # 哪个请求分配了哪些页面, 以及这些页面对应的Token索引范围.
     table_idx_host = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=True)

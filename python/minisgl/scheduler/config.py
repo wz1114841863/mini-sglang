@@ -1,9 +1,5 @@
-# 延迟评估类型注解, 以避免循环导入问题
 from __future__ import annotations
-
-# 自动生成构造函数, 并且使实例不可变(frozen=True)
 from dataclasses import dataclass, field
-
 from minisgl.engine import EngineConfig
 
 
